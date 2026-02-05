@@ -58,6 +58,10 @@ motor_ain2 = machine.PWM(machine.Pin(MOTOR_AIN2_PIN))
 motor_bin1 = machine.PWM(machine.Pin(MOTOR_BIN1_PIN))
 motor_bin2 = machine.PWM(machine.Pin(MOTOR_BIN2_PIN))
 
+# --- Physical Button Setup ---
+# Using GP20 as the start/stop button
+button = machine.Pin(20, machine.Pin.IN, machine.Pin.PULL_UP)
+
 for pwm in [motor_ain1, motor_ain2, motor_bin1, motor_bin2]:
     pwm.freq(PWM_FREQUENCY)
     pwm.duty_u16(0) # Start stopped
@@ -308,6 +312,20 @@ def get_line_position(sensor_values):
     if active_count == 0: return 0.0, False # Error, Line Found Flag
     else: return weighted_sum / active_count, True
 
+def check_physical_button():
+    global robot_active
+    # If button is pressed (logic is 0 because of PULL_UP)
+    if button.value() == 0:
+        time.sleep(0.05) # Simple debounce
+        if button.value() == 0:
+            with state_lock:
+                robot_active = not robot_active # Toggle State
+            print(f">>> Physical Button: Robot {'STARTED' if robot_active else 'STOPPED'} <<<")
+            
+            # Wait for button release so it doesn't flicker
+            while button.value() == 0:
+                time.sleep(0.1)
+
 # --- Main Line Following Loop (Checks robot_active flag) ---
 def line_follow_main():
     global integral, last_error, current_pid_gains, robot_active
@@ -317,6 +335,9 @@ def line_follow_main():
     led.off()
 
     while True:
+        # Check the physical button every loop
+        check_physical_button()
+        
         with state_lock: # Check if robot should be active
             is_active = robot_active
 
