@@ -115,37 +115,93 @@ def connect_wifi(ssid, password):
 
 # --- Web Server for Tuning & Control ---
 # Modified HTML to include Start/Stop buttons and status display
-html_template = """<!DOCTYPE html><html><head><title>Pico PID Tuner & Control</title>
+html_template = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>Pico PID Tuner & Control</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>body{{font-family:sans-serif; background:#222; color:#eee;}} label{{display:block; margin:5px 0;}} span{{font-weight:bold; color:lightblue;}} input[type=range]{{width: 70%;}} button{{padding:10px 15px; margin:5px; font-size:16px;}} #status{{color:{status_color}; font-weight:bold;}}</style>
-</head><body>
+<style>
+  body{{font-family:sans-serif; background:#222; color:#eee;}}
+  label{{display:block; margin:5px 0;}}
+  span{{font-weight:bold; color:lightblue;}}
+  input[type=range]{{width: 70%;}}
+  button{{padding:10px 15px; margin:5px; font-size:16px;}}
+</style>
+</head>
+
+<body>
 <h2>Robot Control</h2>
+
 <p>Status: <span id="status">{robot_status}</span></p>
-<button onclick="fetch('/start')">Start Robot</button>
-<button onclick="fetch('/stop')">Stop Robot</button>
+<p>Run Time: <span id="elapsed">0.00</span> s</p>
+
+<button onclick="startRobot()">Start Robot</button>
+<button onclick="stopRobot()">Stop Robot</button>
+
 <hr>
+
 <h2>PID Tuning</h2>
 <form id="pidForm">
-<label for="speed">Base Speed: <input type="range" id="speed" min="0" max="100" step="1" value="{speed}"> <span id="speed_val">{speed}</span>%</label>
+<label>Base Speed:
+  <input type="range" id="speed" min="0" max="100" step="1" value="{speed}">
+  <span id="speed_val">{speed}</span>%
+</label>
+
 <hr>
-<label for="kp">Kp: <input type="range" id="kp" name="kp" min="0" max="100" step="0.1" value="{kp}"> <span id="kp_val">{kp}</span></label>
-<label for="ki">Ki: <input type="range" id="ki" name="ki" min="0" max="10" step="0.01" value="{ki}"> <span id="ki_val">{ki}</span></label>
-<label for="kd">Kd: <input type="range" id="kd" name="kd" min="0" max="70" step="0.1" value="{kd}"> <span id="kd_val">{kd}</span></label>
+
+<label>Kp:
+  <input type="range" id="kp" min="0" max="100" step="0.1" value="{kp}">
+  <span id="kp_val">{kp}</span>
+</label>
+
+<label>Ki:
+  <input type="range" id="ki" min="0" max="10" step="0.01" value="{ki}">
+  <span id="ki_val">{ki}</span>
+</label>
+
+<label>Kd:
+  <input type="range" id="kd" min="0" max="70" step="0.1" value="{kd}">
+  <span id="kd_val">{kd}</span>
+</label>
+
 <br><button type="submit">Update Gains</button>
 </form>
+
 <script>
+  let startTime = null;
+
+  function startRobot() {{
+    startTime = Date.now();
+    fetch('/start');
+  }}
+
+  function stopRobot() {{
+    if (startTime !== null) {{
+      const stopTime = Date.now();
+      const diffSec = (stopTime - startTime) / 1000;
+      document.getElementById('elapsed').textContent = diffSec.toFixed(2);
+      startTime = null;
+    }}
+    fetch('/stop');
+  }}
+
   const ids = ['kp', 'ki', 'kd', 'speed'];
   ids.forEach(id => {{
-      const slider = document.getElementById(id);
-      const display = document.getElementById(id + '_val');
-      slider.oninput = () => display.textContent = slider.value;
+    const slider = document.getElementById(id);
+    const display = document.getElementById(id + '_val');
+    slider.oninput = () => display.textContent = slider.value;
   }});
+
   document.getElementById('pidForm').onsubmit = (e) => {{
-      e.preventDefault();
-      const params = ids.map(id => id + '=' + document.getElementById(id).value).join('&');
-      fetch('/?' + params);
+    e.preventDefault();
+    const params = ids.map(id => id + '=' + document.getElementById(id).value).join('&');
+    fetch('/?' + params);
   }};
-</script></body></html>"""
+</script>
+</body>
+</html>
+"""
 
 def web_server_thread():
     global current_pid_gains, robot_active,BASE_SPEED_PERCENT # Add robot_active
@@ -199,12 +255,6 @@ def web_server_thread():
                              params[key]=val
                  except Exception as e:
                     print("Parsing error", e)
-                     
-                 
-                 
-                 
-                 
-                 
                  '''matches = ure.findall(r'([\w_]+)=([\d\.]+)', request)
                  for key, value in matches:
                      params[key] = value'''
