@@ -353,6 +353,19 @@ def line_follow_main():
             # --- Read Sensors & Get Error ---
             sensor_values = read_sensors()
             error, line_found = get_line_position(sensor_values)
+            
+            # --- Finish Box Detection ---
+            # If all (or nearly all) sensors see black, stop.
+            # Using NUM_SENSORS - 1 is safer in case one sensor glitches.
+            #race_time = time.ticks_diff(time.ticks_ms(), start_time_ms) / 1000.0
+            black_count = sum(sensor_values)
+            #if race_time > 2.0 and black_count >= (NUM_SENSORS - 1):
+            if black_count >= (NUM_SENSORS - 1):
+                print(">>> FINISH BOX DETECTED! STOPPING... <<<")
+                with state_lock:
+                    robot_active = False
+                stop_motors()
+                continue # Skip the rest of the loop
 
             # --- Handle Line Loss ---
             if not line_found:
