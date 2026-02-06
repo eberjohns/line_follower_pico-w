@@ -8,18 +8,19 @@ import _thread
 MOTOR_AIN1_PIN, MOTOR_AIN2_PIN = 5, 4
 MOTOR_BIN1_PIN, MOTOR_BIN2_PIN = 3, 2
 SENSOR_PINS = [15, 14, 13, 12, 9, 8, 7, 6]
-BUTTON_PIN = 20
 
 # ================= WIFI =================
 SSID = "POCO M2 Pro"
 PASSWORD = "123456789"
 
 # ================= CONTROL =================
-PWM_FREQ = 20000
+PWM_FREQ = 25000
 LOOP_DELAY = 0.005
 
-BASE_SPEED = 95.0
-KP, KD = 30.0, 2.5
+# --- PID & Speed (Tuned for Pivot Turns) ---
+BASE_SPEED = 70.0
+KP, KD = 18.0, 45.0 # Higher gains to force the "opposite direction" turn
+TURBO_BOOST = 25.0  # Extra speed added when error is zero
 
 WEIGHTS = [-5.0, -2.5, -0.5, -0.1, 0.1, 0.5, 2.5, 5.0]
 
@@ -29,7 +30,6 @@ robot_active = False
 start_time_ms = 0
 
 # ================= HARDWARE INIT =================
-btn = machine.Pin(BUTTON_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
 led = machine.Pin("LED", machine.Pin.OUT)
 sensors = [machine.Pin(p, machine.Pin.IN) for p in SENSOR_PINS]
 
@@ -53,9 +53,9 @@ html = """<!DOCTYPE html><html><head>
 <title>Pico Turbo</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-body{{background:#111;color:#eee;text-align:center;font-family:sans-serif}}
-.time{{font-size:3em;color:#0af;font-family:monospace}}
-button{{padding:15px;width:40%;margin:5px;border-radius:8px;font-weight:bold}}
+body{{background:#111;color:#eee;text-align:center;sans-serif}}
+.time{{font-size:3em;color:#0af;monospace}}
+button{{padding:15px;width:40%;5px;border-radius:8px;font-weight:bold}}
 input{{width:80%}}
 </style></head>
 <body>
@@ -68,10 +68,10 @@ input{{width:80%}}
 <input type="range" id="s" min="0" max="100" value="{s}"></label><br>
 
 <label>Kp: <span id="kpv">{kp}</span><br>
-<input type="range" id="kp" min="0" max="100" step="0.5" value="{kp}"></label><br>
+<input type="range" id="kp" min="0" max="100" step="0.1" value="{kp}"></label><br>
 
 <label>Kd: <span id="kdv">{kd}</span><br>
-<input type="range" id="kd" min="0" max="100" step="0.5" value="{kd}"></label><br>
+<input type="range" id="kd" min="0" max="100" step="0.1" value="{kd}"></label><br>
 
 <button type="submit" style="width:85%;background:#444;color:#fff">UPDATE</button>
 </form>
@@ -161,43 +161,37 @@ def web_server():
 def drive():
     global robot_active
     last_err = 0
-
     while True:
-        if btn.value() == 0:
-            time.sleep(0.05)
-            if btn.value() == 0:
-                with state_lock:
-                    robot_active = not robot_active
-                while btn.value() == 0:
-                    time.sleep(0.1)
-
         if robot_active:
-            led.on()
             v = [s.value() for s in sensors]
+            if sum(v) >= 7: # Finish Box
+                with state_lock: robot_active = False
+                set_motors(0,0); continue
 
-            if sum(v) >= 7:
-                with state_lock:
-                    robot_active = False
-                set_motors(0, 0)
-                continue
-
+            # --- SMART ERROR CALCULATION ---
             mid = v[2:6]
-            if sum(mid):
-                err = sum(WEIGHTS[i+2] for i,val in enumerate(mid) if val) / sum(mid)
+            if sum(mid) > 0:
+                err = sum(WEIGHTS[i+2] for i, val in enumerate(mid) if val)/sum(mid)
             else:
-                act = [i for i,val in enumerate(v) if val]
-                err = sum(WEIGHTS[i] for i in act)/len(act) if act else last_err
+                active = [i for i, val in enumerate(v) if val]
+                err = sum(WEIGHTS[i] for i in active)/len(active) if active else (last_err * 1.2) # Aggressive hunt
 
-            corr = KP*err + KD*(err-last_err)/LOOP_DELAY
+            # --- PID LOGIC ---
+            corr = (KP * err) + (KD * (err - last_err) / LOOP_DELAY)
             last_err = err
 
-            set_motors(BASE_SPEED+corr, BASE_SPEED-corr)
-        else:
-            led.off()
-            set_motors(0,0)
-            last_err = 0
-            time.sleep(0.1)
+            # --- TURBO & PIVOT LOGIC ---
+            # If error is tiny, add TURBO_BOOST to both motors
+            if abs(err) < 0.2:
+                current_base = BASE_SPEED + TURBO_BOOST
+            else:
+                current_base = BASE_SPEED
 
+            # The set_motors function now handles the negative values for pivot turns
+            set_motors(current_base + corr, current_base - corr)
+        else:
+            led.off(); set_motors(0,0); last_err = 0; time.sleep(0.1)
+        
         time.sleep(LOOP_DELAY)
 
 # ================= START =================
