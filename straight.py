@@ -62,8 +62,8 @@ input{{width:80%}}
 <button style="background:#e74c3c" onclick="fetch('/stop')">STOP</button>
 <form id="f">
 <p>Speed: <span id="sv">{s}</span>% <input type="range" id="s" min="0" max="100" value="{s}"></p>
-<p>Kp: <span id="kpv">{kp}</span> <input type="range" id="kp" min="0" max="100" step="0.1" value="{kp}"></p>
-<p>Kd: <span id="kdv">{kd}</span> <input type="range" id="kd" min="0" max="200" step="0.1" value="{kd}"></p>
+<p>Kp: <span id="kpv">{kp}</span> <input type="number" id="kp" min="0" max="100" step="0.1" value="{kp}"></p>
+<p>Kd: <span id="kdv">{kd}</span> <input type="number" id="kd" min="0" max="200" step="0.1" value="{kd}"></p>
 <button type="submit" style="width:85%;background:#444;color:#fff">UPDATE GAINS</button>
 </form>
 <script>
