@@ -8,11 +8,11 @@ wlan.active(True)
 
 # ================= 🛠️ CONFIGURABLE PARAMETERS =================
 cfg = {
-    "fwd": 140, "klr": 220, "kb": 220,
-    "s_map": 60.0,  # Increased because 60 is now effectively 30% power
-    "s_race": 80.0, # Increased because 80 is now effectively 40% power
+    "fwd": 150, "klr": 220, "kb": 400,
+    "s_map": 50.0,  # Increased because 60 is now effectively 30% power
+    "s_race": 50.0, # Increased because 80 is now effectively 40% power
     "t": 75.0,      # Turning needs more "oomph" with the 50% cap
-    "kp": 1.2
+    "kp": 1.0
 }
 
 # ================= ⚙️ HARDWARE CONFIG =================
@@ -71,18 +71,48 @@ def set_motors(l, r):
 
 # ================= 🧭 NAVIGATION HELPERS =================
 def execute_turn(node, speed):
-    # Move forward to center the pivot axis
-    set_motors(speed, speed); time.sleep_ms(cfg["fwd"])
+    global mode
     
-    if node == 'S': return # Just move past the node
+    # 1. SMART FORWARD MOVE: Check for finish while centering
+    # Instead of one long sleep, we do many tiny steps
+    steps = cfg["fwd"] // 10
+    found_finish = False
+    
+    set_motors(speed, speed)
+    for _ in range(steps):
+        time.sleep_ms(10)
+        # If at least 7 sensors hit black, it's the finish zone
+        if sum([s.value() for s in sensors]) >= 8:
+            found_finish = True
+            break
+            
+    if found_finish:
+        set_motors(0, 0)
+        return "FINISH" # Signal to the main loop
 
+    if node == 'S': 
+        return "CONTINUE"
+
+    # 2. STABILIZE & TURN
     set_motors(0, 0); time.sleep_ms(50)
-    if node == 'L': set_motors(-cfg["t"], cfg["t"])
-    else: set_motors(cfg["t"], -cfg["t"])
     
-    time.sleep_ms(cfg["klr"] if node != 'B' else cfg["kb"])
-    while sensors[3].value() == 0 and sensors[4].value() == 0: pass 
+    if node == 'L': set_motors(-cfg["t"], cfg["t"])
+    else: set_motors(cfg["t"], -cfg["t"]) # R or B
+    
+    # 3. KICK & CATCH (prevents overshooting)
+    kick_time = 150 if node == 'B' else cfg["klr"]
+    time.sleep_ms(kick_time)
+    
+    while sensors[3].value() == 0 and sensors[4].value() == 0:
+        pass # Wait for center sensors to hit the line
+        
+    # Active Braking
+    if node == 'L': set_motors(cfg["t"], -cfg["t"])
+    else: set_motors(-cfg["t"], cfg["t"])
+    time.sleep_ms(20)
+    
     set_motors(0, 0); time.sleep_ms(50)
+    return "DONE"
 
 # ================= 📱 WEB DASHBOARD =================
 html_template = """<!DOCTYPE html><html><head><title>MAZE MASTER</title>
@@ -148,51 +178,69 @@ def web_server():
         except: pass
 
 # ================= 🏎️ THE MAIN ENGINE =================
+# ================= 🏎️ THE MAIN ENGINE (UPDATED) =================
 def drive():
     global mode, solved_path, race_index
     while True:
         v = [s.value() for s in sensors]
-        
-        if mode == "MAPPING":
-            if sum(v) >= 7: # FINISH
-                set_motors(0, 0); LED_FINISH.on(); 
-                if len(solved_path) > 0: solved_path.pop() # Trim box-edge error
-                mode = "IDLE"; continue
+        s_sum = sum(v)
 
-            if v[0] == 1 or v[1] == 1: # LEFT
-                solved_path = simplify(solved_path + ['L']); execute_turn('L', cfg["s_map"]); continue
-            
-            if sum(v) == 0: # DEAD END
-                solved_path = simplify(solved_path + ['B']); execute_turn('B', cfg["s_map"]); continue
-            
-            if (v[6] == 1 or v[7] == 1):
-                if sum(v[2:6]) == 0: # Forced Right
-                    solved_path = simplify(solved_path + ['R']); execute_turn('R', cfg["s_map"])
-                else: # T-Junction (Straight vs Right) -> Take Straight
-                    solved_path = simplify(solved_path + ['S']); execute_turn('S', cfg["s_map"])
+        if mode == "MAPPING":
+            # Priority 1: Direct Finish Detection
+            if s_sum >= 7:
+                finish_sequence()
                 continue
 
-            # PID Following
+            # Priority 2: Left Turn (Highest Maze Priority)
+            if v[0] == 1 or v[1] == 1:
+                res = execute_turn('L', cfg["s_map"])
+                if res == "FINISH": finish_sequence(); continue
+                solved_path = simplify(solved_path + ['L'])
+                continue
+            
+            # Priority 3: Dead End
+            if s_sum == 0:
+                execute_turn('B', cfg["s_map"])
+                solved_path = simplify(solved_path + ['B'])
+                continue
+            
+            # Priority 4: Right / Straight
+            if v[6] == 1 or v[7] == 1:
+                # If center is also black, it's a T-junction (S vs R)
+                node = 'S' if sum(v[2:6]) > 0 else 'R'
+                res = execute_turn(node, cfg["s_map"])
+                if res == "FINISH": finish_sequence(); continue
+                solved_path = simplify(solved_path + [node])
+                continue
+
+            # Standard PID Following
             err = (v[5]*15 + v[4]*5) - (v[3]*5 + v[2]*15)
             set_motors(cfg["s_map"] + (err * cfg["kp"]), cfg["s_map"] - (err * cfg["kp"]))
 
         elif mode == "RACING":
-            if sum(v) >= 7: set_motors(0, 0); LED_FINISH.on(); mode="IDLE"; continue
+            if s_sum >= 7: finish_sequence(); continue
             
-            # Intersection Detection (Wing sensors hit)
-            if (v[0]==1 or v[1]==1 or v[6]==1 or v[7]==1) or (sum(v[2:6])==0):
+            # Intersection Detection (Wing sensors or total loss of line)
+            if (v[0]==1 or v[1]==1 or v[6]==1 or v[7]==1) or (s_sum == 0):
                 if race_index < len(solved_path):
-                    execute_turn(solved_path[race_index], cfg["s_race"])
+                    res = execute_turn(solved_path[race_index], cfg["s_race"])
+                    if res == "FINISH": finish_sequence(); continue
                     race_index += 1
                 continue
 
-            # High Speed PID
             err = (v[5]*15 + v[4]*5) - (v[3]*5 + v[2]*15)
             set_motors(cfg["s_race"] + (err * cfg["kp"]), cfg["s_race"] - (err * cfg["kp"]))
-
+        
         else:
             set_motors(0, 0); LED_FINISH.off(); time.sleep(0.1)
 
+def finish_sequence():
+    global mode, solved_path
+    set_motors(0, 0)
+    LED_FINISH.on()
+    if mode == "MAPPING" and len(solved_path) > 0:
+        if solved_path[-1] == 'S': solved_path.pop() # Remove ghost straight at end
+    mode = "IDLE"
+
 _thread.start_new_thread(web_server, ())
 drive()
-
