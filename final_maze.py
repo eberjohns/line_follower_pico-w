@@ -21,7 +21,7 @@ SENSOR_PINS = [15, 14, 13, 12, 9, 8, 7, 6]
 LED_FINISH = machine.Pin(16, machine.Pin.OUT)
 
 # ================= 📶 WIFI =================
-SSID, PASSWORD = 'Bsnl Ftth Lonappan', '4885285968'
+SSID, PASSWORD = 'POCO M2 Pro', '123456789'
 
 # ================= 🧠 MAZE MEMORY =================
 raw_path = []      # The "dirty" path with dead ends
@@ -240,8 +240,18 @@ def drive():
         else:
             # IDLE MODE
             set_motors(0, 0)
-            LED_FINISH.off()
             time.sleep(0.1)
+
+def finish_sequence():
+    global mode
+    set_motors(0, 0)
+    # Give a tiny reverse pulse to snap to a dead stop if moving fast
+    set_motors(-20, -20)
+    time.sleep_ms(50)
+    set_motors(0, 0)
+    
+    LED_FINISH.on()  # Turn it on
+    mode = "IDLE"    # This stops the drive logic
 
 _thread.start_new_thread(web_server, ())
 drive()
