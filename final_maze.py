@@ -160,7 +160,7 @@ def web_server():
             cl.close()
         except: pass
 
-# ================= 🏎️ THE MAIN ENGINE =================
+# ================= 🏎️ THE MAIN ENGINE (REWRITTEN) =================
 def drive():
     global mode, solved_path, raw_path, race_index
     while True:
@@ -168,34 +168,80 @@ def drive():
         s_sum = sum(v)
 
         if mode == "MAPPING":
-            if s_sum >= 7: finish_sequence(); continue
-            if v[0] == 1 or v[1] == 1: # Left Junction
-                if execute_turn('L', cfg["s_map"]) == "FINISH": finish_sequence(); continue
-                raw_path.append('L'); continue
-            if s_sum == 0: # Dead End
-                execute_turn('B', cfg["s_map"])
-                raw_path.append('B'); continue
-            if v[6] == 1 or v[7] == 1: # Right/Straight Junction
-                node = 'S' if sum(v[2:6]) > 0 else 'R'
-                if execute_turn(node, cfg["s_map"]) == "FINISH": finish_sequence(); continue
-                raw_path.append(node); continue
+            # 1. FINISH LINE DETECTION (Highest Priority)
+            if s_sum >= 7:
+                finish_sequence()
+                continue
 
+            # 2. LEFT JUNCTION (Left-Hand Rule Priority)
+            if v[0] == 1 or v[1] == 1:
+                # Same "Clear and Check" logic as Right, but we always take 'L'
+                res = execute_turn('L', cfg["s_map"])
+                if res == "FINISH": 
+                    finish_sequence()
+                else:
+                    raw_path.append('L')
+                continue
+            
+            # 3. RIGHT OR STRAIGHT JUNCTION
+            if v[6] == 1 or v[7] == 1:
+                # --- THE FIX: DYNAMIC PEAK ---
+                # Move forward until wing sensors clear the horizontal line
+                while sum([sensors[i].value() for i in [0, 1, 6, 7]]) > 0:
+                    set_motors(cfg["s_map"] * 0.7, cfg["s_map"] * 0.7)
+                
+                # Tiny nudge to ensure center sensors are past the junction core
+                time.sleep_ms(40) 
+                set_motors(0, 0) # Momentary pause for clean sensor reading
+                
+                if sum([s.value() for s in sensors[2:6]]) > 0:
+                    # Line continues! Record Straight. 
+                    # We are already past the junction, so no execute_turn needed.
+                    raw_path.append('S')
+                else:
+                    # Line ended! It was a 90-degree Right Turn.
+                    # We are currently past it, so we need to pivot back onto it.
+                    execute_turn('R', cfg["s_map"])
+                    raw_path.append('R')
+                continue
+
+            # 4. DEAD END (B)
+            if s_sum == 0:
+                time.sleep_ms(20) # Confirmation debounce
+                if sum([s.value() for s in sensors]) == 0:
+                    execute_turn('B', cfg["s_map"])
+                    raw_path.append('B')
+                continue
+
+            # 5. PID LINE FOLLOWING (Standard Path)
             err = (v[5]*15 + v[4]*5) - (v[3]*5 + v[2]*15)
             set_motors(cfg["s_map"] + (err * cfg["kp"]), cfg["s_map"] - (err * cfg["kp"]))
 
         elif mode == "RACING":
             if s_sum >= 7: finish_sequence(); continue
-            # Intersection detected by wings or total loss (Dead end in race = turn)
+            
+            # Intersection Detection (Wings or Gap)
             if (v[0]==1 or v[1]==1 or v[6]==1 or v[7]==1) or (s_sum == 0):
                 if race_index < len(solved_path):
-                    execute_turn(solved_path[race_index], cfg["s_race"])
+                    node = solved_path[race_index]
+                    # We use the same 'S' logic: if S, just move past the wings
+                    if node == 'S':
+                        while sum([sensors[i].value() for i in [0, 1, 6, 7]]) > 0:
+                            set_motors(cfg["s_race"], cfg["s_race"])
+                        time.sleep_ms(30)
+                    else:
+                        execute_turn(node, cfg["s_race"])
                     race_index += 1
                 continue
 
             err = (v[5]*15 + v[4]*5) - (v[3]*5 + v[2]*15)
             set_motors(cfg["s_race"] + (err * cfg["kp"]), cfg["s_race"] - (err * cfg["kp"]))
+        
         else:
-            set_motors(0, 0); time.sleep(0.1)
+            # IDLE MODE
+            set_motors(0, 0)
+            LED_FINISH.off()
+            time.sleep(0.1)
 
 _thread.start_new_thread(web_server, ())
 drive()
