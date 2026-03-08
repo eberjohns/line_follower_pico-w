@@ -13,6 +13,7 @@ SSID, PASSWORD = "POCO M2 Pro", "123456789"
 L_PINS = [5, 4, 3] 
 R_PINS = [2, 1, 0]
 SENSOR_PINS = [15, 14, 13, 12, 9, 8, 7, 6]
+LED_FINISH = machine.Pin(16, machine.Pin.OUT)
 
 # ================= ⚡ VOLTAGE SAFETY (12V to 6V) =================
 SAFE_LIMIT = 0.5 
@@ -22,9 +23,9 @@ PWM_FREQ = 25000
 LOOP_DELAY = 0.005 # 5ms
 
 # Global variables controlled by Web UI
-BASE_SPEED = 70.0
-KP = 18.0
-KD = 45.0
+BASE_SPEED = 50.0
+KP = 30.0
+KD = 120.0
 TURBO_BOOST = 25.0
 # Weighting: Inner sensors have low weights, Outer have high weights
 WEIGHTS = [0.0, -5.0, -3.0, -0.2, 0.2, 3.0, 5.0, 0.0]
@@ -109,8 +110,10 @@ def web_server():
             cl, _ = s.accept(); req = cl.recv(1024).decode()
             if 'GET /start' in req:
                 with state_lock: robot_active = True
+                LED_FINISH.off()
             elif 'GET /stop' in req:
                 with state_lock: robot_active = False
+                LED_FINISH.on()
             elif 'GET /?' in req:
                 m = ure.search(r's=([\d.]+)&kp=([\d.]+)&kd=([\d.]+)', req)
                 if m:
@@ -129,9 +132,10 @@ def drive():
             v = [s.value() for s in sensors]
             
             # 1. Finish Detection (All Black)
-            if sum(v) >= 7:
+            if sum(v) >= 8:
                 with state_lock: robot_active = False
                 set_motors(0, 0)
+                LED_FINISH.on()
                 continue
 
             # 2. Line Detection & Weighted Error
@@ -139,8 +143,23 @@ def drive():
             
             if active_indices:
                 search_start = 0 
-                # Original Weighted Average Logic
-                err = sum(WEIGHTS[i] for i in active_indices) / len(active_indices)
+                
+                # Check sensor zones
+                has_left = any(i in [0, 1] for i in active_indices)
+                has_right = any(i in [6, 7] for i in active_indices)
+                has_center = any(i in [3, 4] for i in active_indices)
+
+                # --- SWEPT-BACK PRIORITY LOGIC ---
+                if has_left and has_center:
+                    # We see a left turn AND we are still on the main line
+                    # This forces a hard pivot left
+                    err = -6.0 
+                elif has_right and has_center:
+                    # Priority 2: Right turn
+                    err = 6.0
+                else:
+                    # Normal PID for curves and straights
+                    err = sum(WEIGHTS[i] for i in active_indices) / len(active_indices)
             else:
                 # LINE LOST: Sweep Search Logic
                 if search_start == 0:
@@ -172,6 +191,9 @@ def drive():
         time.sleep(LOOP_DELAY)
 
 # ================= EXECUTION =================
-print("Starting System...")
-_thread.start_new_thread(web_server, ())
-drive()
+def run():
+    print("Starting System...")
+    _thread.start_new_thread(web_server, ())
+    drive()
+
+run()
